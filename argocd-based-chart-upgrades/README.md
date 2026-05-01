@@ -7,7 +7,7 @@
 > a production cluster, and adapt to fit your own conventions.
 
 A small bash script that pulls a new official Astronomer Helm chart version
-into a GitOps central-repo while preserving your in-tree customizations via
+into your GitOps repo while preserving your in-tree customizations via
 git's 3-way merge.
 
 Single file. No dependencies beyond `git` and `curl` (optional `gh` for PR
@@ -48,9 +48,9 @@ non-overlapping changes and surfaces only the conflicts that need a human.
 This example assumes you are running an APC deployment that follows roughly
 this pattern:
 
-- A "central-repo" git layout, where the Astronomer Helm chart lives in a
-  subdirectory of your repo (e.g. `astronomer/`) alongside your
-  customizations and any per-environment values files.
+- A repo layout where the Astronomer Helm chart lives in a subdirectory
+  (e.g. `astronomer/`) alongside your customizations and any
+  per-environment values files.
 - ArgoCD (or any GitOps tool) watches a customizations branch and syncs to
   the cluster on every commit.
 - The chart version you currently run is published at
@@ -79,7 +79,7 @@ flags:
 
 ## Instructions
 
-### One-time bootstrap (per central-repo)
+### One-time bootstrap (per repo)
 
 The first time you use the script in a given repo, you need to tell it what
 official chart version your customizations branch currently sits on top of.
@@ -94,7 +94,7 @@ awk '/^version:/ {print $2}' astronomer/Chart.yaml
 Then run the bootstrap with that value:
 
 ```bash
-cd <your-central-repo>
+cd <your-repo>
 bin/upgrade-chart --bootstrap 1.1.0
 ```
 
@@ -127,19 +127,19 @@ The merge produces four classes of outcome:
 
 The script doesn't know about your environment topology — it operates on
 whatever git repo it's invoked from. To upgrade across multiple
-environments (e.g. dev / test / prod), run it from each central-repo
+environments (e.g. dev / test / prod), run it from each repo
 separately:
 
 ```bash
-cd <your-dev-central-repo>
+cd <your-dev-repo>
 bin/upgrade-chart 1.1.3
 # review PR, merge, watch ArgoCD sync, validate Houston
 
-cd <your-test-central-repo>
+cd <your-test-repo>
 bin/upgrade-chart 1.1.3
 # same drill
 
-cd <your-prod-central-repo>
+cd <your-prod-repo>
 bin/upgrade-chart 1.1.3
 # same drill
 ```
@@ -209,7 +209,7 @@ The full troubleshooting guide lives in the script itself — run
 
 This example was developed and tested in a representative sandbox: a
 vanilla v1.1.0 chart in a git repo, plus five customizations covering the
-patterns most commonly seen in real central-repos:
+patterns most commonly seen in real repos:
 
 - Pure-add files at the root of `templates/`
 - Pure-add directories under `templates/` (Istio VirtualServices, custom

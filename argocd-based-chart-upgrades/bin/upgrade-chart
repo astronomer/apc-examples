@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# upgrade-chart — Pull a new official astronomer chart version into a
-# central-repo while preserving your customizations via git 3-way merge.
+# upgrade-chart — Pull a new official astronomer chart version into your
+# repo while preserving your customizations via git 3-way merge.
 #
 # USAGE
 #   bin/upgrade-chart <target-version>            # the upgrade
@@ -65,8 +65,8 @@
 # AFTER A SUCCESSFUL RUN
 #   - Review the PR; merge it.
 #   - ArgoCD syncs your target branch on its next pull.
-#   - For multi-environment setups (e.g. one central-repo per environment),
-#     run this script in each central-repo separately.
+#   - For multi-environment setups (e.g. one repo per environment),
+#     run this script in each repo separately.
 #
 # MAJOR VERSION CAVEAT (e.g., 1.x → 2.0)
 #   Major upgrades may surface MORE conflicts than minor bumps:
@@ -177,6 +177,22 @@ done
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
     || die "Not in a git repository."
 cd "$REPO_ROOT"
+
+# ---------- sanity-check: this is the right repo ----------------------
+# Both bootstrap and upgrade modes assume the working tree contains the
+# astronomer chart at $CHART_DIR/. Catch wrong-cwd invocations here so
+# the user doesn't get sent off to `awk` a file that doesn't exist.
+if [ ! -f "$CHART_DIR/Chart.yaml" ]; then
+    err "No '$CHART_DIR/Chart.yaml' found in $REPO_ROOT."
+    err ""
+    err "This script expects to run from a repo containing the astronomer"
+    err "Helm chart in a subdirectory. By default it looks in '$CHART_DIR/' —"
+    err "pass --chart-dir <path> if your chart lives elsewhere (e.g."
+    err "'charts/astronomer')."
+    err ""
+    err "If you're not in the right repo, cd into it and re-run."
+    exit 1
+fi
 
 # =========================================================================
 # Bootstrap mode
