@@ -174,17 +174,44 @@ while [ $# -gt 0 ]; do
 done
 
 # ---------- anchor at repo root ---------------------------------------
+ORIGINAL_PWD="$PWD"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
     || die "Not in a git repository."
 cd "$REPO_ROOT"
 
 # ---------- sanity-check: this is the right repo ----------------------
-# Both bootstrap and upgrade modes assume the working tree contains the
-# astronomer chart at $CHART_DIR/. Catch wrong-cwd invocations here so
-# the user doesn't get sent off to `awk` a file that doesn't exist.
+# Both bootstrap and upgrade modes assume the git repo's working tree
+# contains the astronomer chart at $CHART_DIR/. Catch wrong-cwd
+# invocations here so the user doesn't get sent off to `awk` a file
+# that doesn't exist (or worse, mutate the wrong git repo).
 if [ ! -f "$CHART_DIR/Chart.yaml" ]; then
-    err "No '$CHART_DIR/Chart.yaml' found in $REPO_ROOT."
+    err "No '$CHART_DIR/Chart.yaml' found in $REPO_ROOT (the git repo root)."
     err ""
+
+    # Tailored hint for the "I cloned the chart inside an unrelated repo
+    # to test this script" case: chart exists at the user's cwd, but the
+    # enclosing git repo is something else entirely. Without this hint,
+    # the user might keep cloning charts into deeper subdirs and get the
+    # same error each time.
+    if [ "$ORIGINAL_PWD" != "$REPO_ROOT" ] && [ -f "$ORIGINAL_PWD/$CHART_DIR/Chart.yaml" ]; then
+        err "A chart exists at $ORIGINAL_PWD/$CHART_DIR/Chart.yaml, but that"
+        err "directory is a subdirectory of the git repo at $REPO_ROOT —"
+        err "not the repo's root. The script's git operations (branch"
+        err "creation, merge, push) would target the enclosing repo, which"
+        err "doesn't contain this chart."
+        err ""
+        err "If you're trying to test the upgrade flow, set up a dedicated"
+        err "sandbox repo:"
+        err ""
+        err "    mkdir /tmp/upgrade-sandbox && cd /tmp/upgrade-sandbox"
+        err "    git init"
+        err "    curl -fsSL https://helm.astronomer.io/astronomer-1.1.0.tgz | tar -xz"
+        err "    git add astronomer/ && git commit -m 'initial chart'"
+        err ""
+        err "Then run --bootstrap 1.1.0 and your real upgrade from there."
+        exit 1
+    fi
+
     err "This script expects to run from a repo containing the astronomer"
     err "Helm chart in a subdirectory. By default it looks in '$CHART_DIR/' —"
     err "pass --chart-dir <path> if your chart lives elsewhere (e.g."
