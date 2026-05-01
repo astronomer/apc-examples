@@ -187,13 +187,13 @@ into `deployments.deployments.*` and the override becomes inert.
 
 The Houston resolver merges your override into the cluster's effective
 config with **array replacement**, not concatenation. If `overrides.json`
-contains a partial `helm.airflow.statsd.overrideMappings` list, the
+contains a partial `helm.airflow.statsd.overrideMappings` list, for example, the
 cluster's previous mappings are dropped — not appended. Always treat
 arrays in this file as the complete desired set.
 
 ---
 
-## Removing a value (the gotcha)
+## Removing a value
 
 The Houston resolver merges your override into the cluster's effective
 config but does **not** automatically drop keys you remove from the file.
