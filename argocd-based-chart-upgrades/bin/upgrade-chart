@@ -48,9 +48,11 @@
 #   --chart-dir DIR         Path to the chart directory (default: astronomer).
 #   --target-branch B       Branch holding your customizations (default: dev).
 #   --no-pr                 Skip `gh pr create` even if available.
-#   --dry-run               Local-only run — perform git operations but skip
-#                           the push to origin and PR creation. Inspect the
-#                           result with `git log`; reset with
+#   --dry-run               Modifier for the upgrade flow — perform all git
+#                           operations locally but skip the push to origin
+#                           and PR creation. Still requires <target-version>;
+#                           e.g. `bin/upgrade-chart --dry-run 1.1.3`.
+#                           Inspect the result with `git log`; reset with
 #                           `git reset --hard` if it isn't what you wanted.
 #   --help                  Print this runbook.
 #
@@ -233,7 +235,16 @@ fi
 # =========================================================================
 # Upgrade mode
 # =========================================================================
-[ -n "$TARGET_VERSION" ] || { print_help; exit 1; }
+if [ -z "$TARGET_VERSION" ]; then
+    err "Missing required argument: <target-version>"
+    err ""
+    err "Examples:"
+    err "  $(basename "$0") 1.1.3                # upgrade to v1.1.3"
+    err "  $(basename "$0") --dry-run 1.1.3      # same flow, no push or PR"
+    err "  $(basename "$0") --bootstrap 1.1.0    # one-time setup"
+    err "  $(basename "$0") --help               # full runbook"
+    exit 1
+fi
 
 info "Upgrading to v$TARGET_VERSION"
 
