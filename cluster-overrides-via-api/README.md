@@ -21,15 +21,16 @@ The example targets **APC 1.1.x** and is built around the Houston
 The Cluster Deployment Configuration page in the APC UI is a powerful but
 inherently click-driven workflow. For organizations that prefer (or are
 required to) manage all production-affecting configuration through git +
-pull request review, that page is a gap: changes are made by clicking,
-audit trails live in Houston's database, and recreating a cluster's
-overrides on a new install is a matter of carefully copy-pasting from
-screenshots.
+pull request review, that workflow can be improved: changes are made by
+clicking, audit trails live in Houston's database, and recreating a
+cluster's overrides on a new install means reapplying values by hand from
+a known-good config.
 
-This example closes that gap by treating `cluster.configOverride.deployments`
-as code. A single `overrides.json` file is the source of truth; two GitHub
-Actions workflows (`plan` and `apply`) use the Houston GraphQL API to
-diff and reconcile that file against the live cluster.
+This example improves that workflow by treating
+`cluster.configOverride.deployments` as code. A single `overrides.json`
+file is the source of truth; two GitHub Actions workflows (`plan` and
+`apply`) use the Houston GraphQL API to diff and reconcile that file
+against the live cluster.
 
 What this gives you:
 
@@ -147,7 +148,7 @@ The simplest way to seed the file:
 curl -s -X POST "$HOUSTON_BASE_URL/v1" \
   -H "Authorization: Bearer $HOUSTON_SA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query":"query { cluster(id: \"<cluster-id>\") { configOverride } }"}' \
+  -d "{\"query\":\"query { cluster(id: \\\"$HOUSTON_CLUSTER_ID\\\") { configOverride } }\"}" \
   | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["data"]["cluster"]["configOverride"].get("deployments",{}), indent=2))' \
   > overrides.json
 ```
@@ -194,9 +195,9 @@ Common top-level keys:
 | `maxExtraCapacity` | The cluster-wide ceiling for the resource sliders in the deployment UI |
 | `astroUnit` | The base accounting unit for the resource sliders |
 
-The full list is defined under `clusters.deployments` in the Houston
-default config (see the upstream repository at
-https://github.com/astronomer/houston-api).
+The full set of available keys is visible in the **Cluster Deployment
+Configuration** page in the APC UI; ask your Astronomer account team if
+you need a definitive list.
 
 ### Important: arrays REPLACE on merge
 

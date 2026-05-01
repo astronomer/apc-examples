@@ -48,7 +48,10 @@
 #   --chart-dir DIR         Path to the chart directory (default: astronomer).
 #   --target-branch B       Branch holding your customizations (default: dev).
 #   --no-pr                 Skip `gh pr create` even if available.
-#   --no-push               Pure-local dry run — don't push anything.
+#   --dry-run               Local-only run — perform git operations but skip
+#                           the push to origin and PR creation. Inspect the
+#                           result with `git log`; reset with
+#                           `git reset --hard` if it isn't what you wanted.
 #   --help                  Print this runbook.
 #
 # EXIT CODES
@@ -102,6 +105,12 @@
 
 set -euo pipefail
 
+# Capture the script's absolute path BEFORE any `cd` later in the file —
+# `print_help` reads the script back via awk, and a relative $0 breaks
+# once the working directory changes (e.g. when invoked from a subdir of
+# the target git repo).
+SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+
 # ---------- defaults ---------------------------------------------------
 CHART_NAME=astronomer
 CHART_DIR=astronomer
@@ -120,7 +129,7 @@ print_help() {
         /^# / { sub(/^# ?/, ""); print; next }
         /^#$/ { print ""; next }
         { exit }
-    ' "$0"
+    ' "$SCRIPT_PATH"
 }
 
 err()  { echo "ERROR: $*" >&2; }
@@ -148,7 +157,7 @@ while [ $# -gt 0 ]; do
         --bootstrap)      BOOTSTRAP_VERSION="${2:-}"; [ -n "$BOOTSTRAP_VERSION" ] || die "--bootstrap requires a version"; shift 2 ;;
         --chart-dir)      CHART_DIR="${2:-}"; [ -n "$CHART_DIR" ] || die "--chart-dir requires a directory"; shift 2 ;;
         --target-branch)  TARGET_BRANCH="${2:-}"; [ -n "$TARGET_BRANCH" ] || die "--target-branch requires a branch name"; shift 2 ;;
-        --no-push)        DO_PUSH=0; shift ;;
+        --dry-run)        DO_PUSH=0; shift ;;
         --no-pr)          DO_PR=0; shift ;;
         --*)              die "Unknown flag: $1 (try --help)" ;;
         *)
@@ -209,7 +218,7 @@ if [ -n "$BOOTSTRAP_VERSION" ]; then
         info "Pushing '$UPSTREAM_BRANCH' to origin"
         git push -u origin "$UPSTREAM_BRANCH"
     else
-        info "Skipping push (--no-push). Branch is local only."
+        info "Skipping push (--dry-run). Branch is local only."
     fi
 
     info "Switching back to '$ORIGINAL_BRANCH'"
@@ -326,7 +335,7 @@ info "Merge clean — your customizations preserved on top of v$TARGET_VERSION"
 
 # --- Step 7 — push and open PR --------------------------------------------
 if [ "$DO_PUSH" != "1" ]; then
-    info "Skipping push (--no-push). Branch '$UPGRADE_BRANCH' is local only."
+    info "Skipping push (--dry-run). Branch '$UPGRADE_BRANCH' is local only."
     git checkout "$ORIGINAL_BRANCH"
     exit 0
 fi
