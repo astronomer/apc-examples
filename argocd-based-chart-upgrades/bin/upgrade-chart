@@ -1,0 +1,377 @@
+#!/usr/bin/env bash
+#
+# upgrade-chart — Pull a new official astronomer chart version into a
+# central-repo while preserving your customizations via git 3-way merge.
+#
+# USAGE
+#   bin/upgrade-chart <target-version>            # the upgrade
+#   bin/upgrade-chart --bootstrap <version>       # one-time first-run setup
+#   bin/upgrade-chart --help                      # this runbook
+#
+# QUICK START
+#   First time? You need to bootstrap once:
+#
+#     bin/upgrade-chart --bootstrap 1.1.0
+#
+#   (replace 1.1.0 with whatever official chart version your customizations
+#   branch is currently at — check `awk '/^version:/ {print $2}' astronomer/Chart.yaml`)
+#
+#   Subsequent upgrades:
+#
+#     bin/upgrade-chart 1.1.3
+#
+# WHAT IT DOES (upgrade flow)
+#   1. Validates: in a git repo, working tree clean, upstream-chart and
+#      target branches exist.
+#   2. Reads current official version from upstream-chart's Chart.yaml.
+#   3. Downloads astronomer-<target>.tgz from https://helm.astronomer.io/.
+#   4. On upstream-chart: removes the old astronomer/ tree, extracts the
+#      new tarball, commits, pushes (unless --no-push).
+#   5. Branches off your target branch as chart-upgrade/<target>.
+#   6. Merges upstream-chart into the new branch (real 3-way merge):
+#        Files you didn't touch       → applied upstream-clean.
+#        Files you added              → preserved (no conflict possible).
+#        Files both touched in
+#           different regions         → auto-resolved.
+#        Files both touched in
+#           the same region           → CONFLICT, you resolve manually.
+#   7. Pushes the upgrade branch. If `gh` is installed and authenticated,
+#      opens a PR. Otherwise prints branch info for manual PR creation.
+#
+# WHAT IT DOES (bootstrap flow, --bootstrap <version>)
+#   One-time setup that creates the upstream-chart branch as an orphan
+#   (no shared history with main/dev) holding ONLY the official chart at
+#   <version>. After bootstrap, run the upgrade flow.
+#
+# OPTIONS
+#   --bootstrap <version>   One-time setup (see above).
+#   --chart-dir DIR         Path to the chart directory (default: astronomer).
+#   --target-branch B       Branch holding your customizations (default: dev).
+#   --no-pr                 Skip `gh pr create` even if available.
+#   --no-push               Pure-local dry run — don't push anything.
+#   --help                  Print this runbook.
+#
+# EXIT CODES
+#   0  success (or PR opened, or already up to date)
+#   1  precondition failed / bad usage
+#   2  download failed
+#   3  merge conflicts — resolve manually then `git merge --continue`
+#
+# AFTER A SUCCESSFUL RUN
+#   - Review the PR; merge it.
+#   - ArgoCD syncs your target branch on its next pull.
+#   - For multi-environment setups (e.g. one central-repo per environment),
+#     run this script in each central-repo separately.
+#
+# MAJOR VERSION CAVEAT (e.g., 1.x → 2.0)
+#   Major upgrades may surface MORE conflicts than minor bumps:
+#     - Files may be renamed (git sees: delete + add → your edits on the
+#       old name conflict with the deletion).
+#     - values.yaml keys may be restructured (chart still installs but
+#       your values silently stop applying).
+#     - New required values may have no defaults (helm template fails
+#       post-merge).
+#   The script can't detect any of these — they're semantic, not textual.
+#   Read the upstream changelog before running a major upgrade.
+#
+# TROUBLESHOOTING
+#   "Working tree is not clean"
+#     → commit or stash your changes, then re-run.
+#
+#   "Branch 'upstream-chart' does not exist"
+#     → first-time setup needed. Run --bootstrap <current-version>.
+#
+#   "MERGE CONFLICTS encountered"
+#     → expected for some upgrades. Run `git status`, edit the marked
+#       files (look for <<<<<<< / ======= / >>>>>>> markers), then
+#       `git add <file>` for each resolved file, then `git merge --continue`.
+#
+#   "Failed to download"
+#     → check that <target-version> is a real published version at
+#       https://helm.astronomer.io/index.yaml. Common typo: 1.13 vs 1.1.3.
+#
+#   "Branch 'upstream-chart' already exists" during --bootstrap
+#     → bootstrap is one-time only. If it failed mid-run and you need to
+#       redo it: `git branch -D upstream-chart` (and `git push origin
+#       --delete upstream-chart` if it was pushed), then re-run.
+#
+# UPSTREAM
+#   Chart published at: https://helm.astronomer.io/
+#   Available versions: https://helm.astronomer.io/index.yaml
+#   Source repo:        https://github.com/astronomer/astronomer
+
+set -euo pipefail
+
+# ---------- defaults ---------------------------------------------------
+CHART_NAME=astronomer
+CHART_DIR=astronomer
+TARGET_BRANCH=dev
+UPSTREAM_BRANCH=upstream-chart
+HELM_REPO=https://helm.astronomer.io
+DO_PUSH=1
+DO_PR=1
+BOOTSTRAP_VERSION=""
+TARGET_VERSION=""
+
+# ---------- helpers ----------------------------------------------------
+print_help() {
+    awk '
+        NR==1 { next }                                    # skip shebang
+        /^# / { sub(/^# ?/, ""); print; next }
+        /^#$/ { print ""; next }
+        { exit }
+    ' "$0"
+}
+
+err()  { echo "ERROR: $*" >&2; }
+info() { echo "==> $*"; }
+die()  { err "$*"; exit 1; }
+
+require_clean_tree() {
+    if [ -n "$(git status --porcelain)" ]; then
+        die "Working tree is not clean. Commit, stash, or discard changes first."
+    fi
+}
+
+branch_exists_local()  { git show-ref --verify --quiet "refs/heads/$1"; }
+branch_exists_remote() { git ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1; }
+
+read_chart_version() {
+    # Reads version: from <branch>:<chart-dir>/Chart.yaml without checking out.
+    git show "$1:$CHART_DIR/Chart.yaml" 2>/dev/null | awk '/^version:/ {print $2; exit}'
+}
+
+# ---------- argument parsing ------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h)        print_help; exit 0 ;;
+        --bootstrap)      BOOTSTRAP_VERSION="${2:-}"; [ -n "$BOOTSTRAP_VERSION" ] || die "--bootstrap requires a version"; shift 2 ;;
+        --chart-dir)      CHART_DIR="${2:-}"; [ -n "$CHART_DIR" ] || die "--chart-dir requires a directory"; shift 2 ;;
+        --target-branch)  TARGET_BRANCH="${2:-}"; [ -n "$TARGET_BRANCH" ] || die "--target-branch requires a branch name"; shift 2 ;;
+        --no-push)        DO_PUSH=0; shift ;;
+        --no-pr)          DO_PR=0; shift ;;
+        --*)              die "Unknown flag: $1 (try --help)" ;;
+        *)
+            if [ -z "$TARGET_VERSION" ]; then
+                TARGET_VERSION="$1"
+            else
+                die "Unexpected argument: $1 (try --help)"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# ---------- anchor at repo root ---------------------------------------
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
+    || die "Not in a git repository."
+cd "$REPO_ROOT"
+
+# =========================================================================
+# Bootstrap mode
+# =========================================================================
+if [ -n "$BOOTSTRAP_VERSION" ]; then
+    info "Bootstrap mode: creating '$UPSTREAM_BRANCH' at v$BOOTSTRAP_VERSION"
+
+    # Refuse if branch already exists anywhere — bootstrap is one-time.
+    if branch_exists_local "$UPSTREAM_BRANCH"; then
+        die "Branch '$UPSTREAM_BRANCH' already exists locally. Bootstrap is one-time only."
+    fi
+    if branch_exists_remote "$UPSTREAM_BRANCH"; then
+        die "Branch '$UPSTREAM_BRANCH' already exists on origin. Someone may have already bootstrapped — fetch and try the upgrade flow."
+    fi
+
+    require_clean_tree
+    ORIGINAL_BRANCH="$(git branch --show-current)"
+
+    TMPDIR_BS="$(mktemp -d)"
+    trap 'rm -rf "$TMPDIR_BS"' EXIT
+
+    info "Downloading $CHART_NAME-$BOOTSTRAP_VERSION.tgz from $HELM_REPO"
+    if ! curl -fsSL "$HELM_REPO/$CHART_NAME-$BOOTSTRAP_VERSION.tgz" -o "$TMPDIR_BS/chart.tgz"; then
+        err "Could not download $HELM_REPO/$CHART_NAME-$BOOTSTRAP_VERSION.tgz"
+        err "Check that v$BOOTSTRAP_VERSION is a published version: $HELM_REPO/index.yaml"
+        exit 2
+    fi
+
+    # Orphan branch: no shared history with main/dev. The chart-only branch
+    # carries ONLY chart contents — no READMEs, no CI configs, no env values.
+    info "Creating orphan branch '$UPSTREAM_BRANCH'"
+    git checkout --orphan "$UPSTREAM_BRANCH"
+    git rm -rf . >/dev/null 2>&1 || true
+
+    info "Extracting chart into $CHART_DIR/"
+    tar -xzf "$TMPDIR_BS/chart.tgz"
+    git add "$CHART_DIR/"
+    git commit -m "Official astronomer chart v$BOOTSTRAP_VERSION"
+
+    if [ "$DO_PUSH" = "1" ]; then
+        info "Pushing '$UPSTREAM_BRANCH' to origin"
+        git push -u origin "$UPSTREAM_BRANCH"
+    else
+        info "Skipping push (--no-push). Branch is local only."
+    fi
+
+    info "Switching back to '$ORIGINAL_BRANCH'"
+    git checkout "$ORIGINAL_BRANCH"
+
+    info ""
+    info "Bootstrap complete. To run the upgrade:"
+    info "  bin/upgrade-chart <target-version>"
+    exit 0
+fi
+
+# =========================================================================
+# Upgrade mode
+# =========================================================================
+[ -n "$TARGET_VERSION" ] || { print_help; exit 1; }
+
+info "Upgrading to v$TARGET_VERSION"
+
+# --- Step 1 — preconditions ------------------------------------------------
+require_clean_tree
+
+if ! branch_exists_local "$UPSTREAM_BRANCH"; then
+    err "Branch '$UPSTREAM_BRANCH' does not exist locally."
+    err ""
+    err "This looks like first-time setup. Run:"
+    err ""
+    err "  bin/upgrade-chart --bootstrap <current-version>"
+    err ""
+    err "where <current-version> is whatever official chart version your"
+    err "$TARGET_BRANCH branch is currently at. To find it:"
+    err ""
+    err "  awk '/^version:/ {print \$2}' $CHART_DIR/Chart.yaml"
+    err ""
+    err "Then re-run:  bin/upgrade-chart $TARGET_VERSION"
+    exit 1
+fi
+
+if ! branch_exists_local "$TARGET_BRANCH"; then
+    die "Target branch '$TARGET_BRANCH' does not exist locally."
+fi
+
+# --- Step 2 — read current version on upstream-chart ----------------------
+CURRENT_VERSION="$(read_chart_version "$UPSTREAM_BRANCH" || true)"
+[ -n "$CURRENT_VERSION" ] || die "Could not read version from '$UPSTREAM_BRANCH:$CHART_DIR/Chart.yaml'"
+
+if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
+    info "'$UPSTREAM_BRANCH' already at v$TARGET_VERSION. Nothing to do."
+    exit 0
+fi
+
+info "Current: v$CURRENT_VERSION  →  Target: v$TARGET_VERSION"
+
+ORIGINAL_BRANCH="$(git branch --show-current)"
+TMPDIR_UP="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_UP"' EXIT
+
+# --- Step 3 — download new tarball ----------------------------------------
+info "Downloading $CHART_NAME-$TARGET_VERSION.tgz from $HELM_REPO"
+if ! curl -fsSL "$HELM_REPO/$CHART_NAME-$TARGET_VERSION.tgz" -o "$TMPDIR_UP/chart.tgz"; then
+    err "Could not download $HELM_REPO/$CHART_NAME-$TARGET_VERSION.tgz"
+    err "Check that v$TARGET_VERSION is a published version: $HELM_REPO/index.yaml"
+    exit 2
+fi
+
+# --- Step 4 — update upstream-chart branch --------------------------------
+info "Updating '$UPSTREAM_BRANCH' to v$TARGET_VERSION"
+git checkout "$UPSTREAM_BRANCH"
+rm -rf "$CHART_DIR"
+tar -xzf "$TMPDIR_UP/chart.tgz"
+git add "$CHART_DIR"
+
+if [ -z "$(git status --porcelain)" ]; then
+    # Tarball contents identical to current branch — possible if someone
+    # re-published the same tag. Skip the commit, but keep the branch state.
+    info "Tarball contents match current '$UPSTREAM_BRANCH' state. Skipping commit."
+else
+    git commit -m "Official astronomer chart v$CURRENT_VERSION → v$TARGET_VERSION"
+    if [ "$DO_PUSH" = "1" ]; then
+        info "Pushing '$UPSTREAM_BRANCH'"
+        git push origin "$UPSTREAM_BRANCH"
+    fi
+fi
+
+# --- Step 5 — branch from target, then merge ------------------------------
+UPGRADE_BRANCH="chart-upgrade/$TARGET_VERSION"
+
+if branch_exists_local "$UPGRADE_BRANCH"; then
+    die "Branch '$UPGRADE_BRANCH' already exists. Delete it (git branch -D $UPGRADE_BRANCH) or rename it before re-running."
+fi
+
+info "Creating branch '$UPGRADE_BRANCH' from '$TARGET_BRANCH'"
+git checkout -b "$UPGRADE_BRANCH" "$TARGET_BRANCH"
+
+# --- Step 6 — 3-way merge -------------------------------------------------
+info "Merging '$UPSTREAM_BRANCH' (3-way merge — preserves your customizations)"
+if ! git merge --no-edit "$UPSTREAM_BRANCH"; then
+    err ""
+    err "MERGE CONFLICTS encountered — this is normal for some upgrades."
+    err ""
+    err "Files with conflicts:"
+    git diff --name-only --diff-filter=U | sed 's/^/  /' >&2
+    err ""
+    err "To resolve:"
+    err "  1. Edit each file above (look for <<<<<<< / ======= / >>>>>>> markers)"
+    err "  2. git add <file>      (for each resolved file)"
+    err "  3. git merge --continue"
+    err "  4. Push and open PR manually, or re-run this script with the same"
+    err "     args after resolving + committing — it will detect the merge"
+    err "     state and continue."
+    exit 3
+fi
+
+info "Merge clean — your customizations preserved on top of v$TARGET_VERSION"
+
+# --- Step 7 — push and open PR --------------------------------------------
+if [ "$DO_PUSH" != "1" ]; then
+    info "Skipping push (--no-push). Branch '$UPGRADE_BRANCH' is local only."
+    git checkout "$ORIGINAL_BRANCH"
+    exit 0
+fi
+
+info "Pushing '$UPGRADE_BRANCH'"
+git push -u origin "$UPGRADE_BRANCH"
+
+if [ "$DO_PR" != "1" ]; then
+    info "Skipping PR creation (--no-pr)."
+    git checkout "$ORIGINAL_BRANCH"
+    exit 0
+fi
+
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    info "Opening PR via gh"
+    gh pr create \
+        --base "$TARGET_BRANCH" \
+        --head "$UPGRADE_BRANCH" \
+        --title "Upgrade astronomer chart to v$TARGET_VERSION" \
+        --body "Upgrades the official astronomer chart from v$CURRENT_VERSION to v$TARGET_VERSION via 3-way merge against $UPSTREAM_BRANCH.
+
+## Files changed
+
+\`\`\`
+$(git diff --name-status "$TARGET_BRANCH..$UPGRADE_BRANCH" | head -50)
+\`\`\`
+
+## Upstream changelog
+
+https://github.com/astronomer/astronomer/releases/tag/v$TARGET_VERSION
+
+## After merge
+
+ArgoCD will sync the new chart on its next pull."
+else
+    info ""
+    info "gh not available or not authenticated — skipping PR creation."
+    info ""
+    info "To open a PR manually:"
+    info "  Branch: $UPGRADE_BRANCH"
+    info "  Base:   $TARGET_BRANCH"
+    info "  Title:  Upgrade astronomer chart to v$TARGET_VERSION"
+    info ""
+    info "(Install gh: https://cli.github.com — then run \`gh auth login\` once.)"
+fi
+
+git checkout "$ORIGINAL_BRANCH"
+info "Done."

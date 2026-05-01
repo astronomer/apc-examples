@@ -1,0 +1,36 @@
+name: apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - overrides.json
+      - reconcile.py
+      - .github/workflows/apply.yml
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run apply
+        shell: bash
+        run: |
+          set -eo pipefail
+          python3 reconcile.py apply 2>&1 | tee apply.log
+          {
+            echo "## Apply result"
+            echo ""
+            echo '```'
+            cat apply.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          HOUSTON_BASE_URL: ${{ vars.HOUSTON_BASE_URL }}
+          HOUSTON_CLUSTER_ID: ${{ vars.HOUSTON_CLUSTER_ID }}
+          HOUSTON_SA_TOKEN: ${{ secrets.HOUSTON_SA_TOKEN }}

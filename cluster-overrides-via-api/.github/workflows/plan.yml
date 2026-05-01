@@ -1,0 +1,35 @@
+name: plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - overrides.json
+      - reconcile.py
+      - .github/workflows/plan.yml
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run plan
+        id: plan
+        shell: bash
+        run: |
+          set -eo pipefail
+          python3 reconcile.py plan 2>&1 | tee plan.txt
+        env:
+          HOUSTON_BASE_URL: ${{ vars.HOUSTON_BASE_URL }}
+          HOUSTON_CLUSTER_ID: ${{ vars.HOUSTON_CLUSTER_ID }}
+          HOUSTON_SA_TOKEN: ${{ secrets.HOUSTON_SA_TOKEN }}
+
+      - name: Comment plan on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body-file plan.txt

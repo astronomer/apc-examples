@@ -1,0 +1,62 @@
+{
+  "helm": {
+    "extraObjects": [
+      {
+        "apiVersion": "networking.istio.io/v1",
+        "kind": "VirtualService",
+        "metadata": {
+          "name": "{{ .Release.Name }}-airflow-vs",
+          "namespace": "{{ .Release.Namespace }}"
+        },
+        "spec": {
+          "gateways": [
+            "istio-system/astronomer-gateway"
+          ],
+          "hosts": [
+            "{{ .Release.Name }}.{{ .Values.global.baseDomain }}",
+            "deployments.{{ .Values.global.baseDomain }}"
+          ],
+          "http": [
+            {
+              "match": [
+                { "uri": { "prefix": "/{{ .Release.Name }}/airflow" } }
+              ],
+              "route": [
+                {
+                  "destination": {
+                    "host": "{{ .Release.Name }}-api-server",
+                    "port": { "number": 8084 }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "airflow": {
+      "statsd": {
+        "overrideMappings": [
+          {
+            "name": "airflow_operator_successes",
+            "match": "airflow.operator_successes_(.*)",
+            "match_type": "regex",
+            "labels": { "operator": "$1" }
+          },
+          {
+            "name": "airflow_operator_failures",
+            "match": "airflow.operator_failures_(.*)",
+            "match_type": "regex",
+            "labels": { "operator": "$1" }
+          },
+          {
+            "name": "airflow_dag_task_duration",
+            "match": "airflow.dag.*.*.duration",
+            "match_type": "glob",
+            "labels": { "dag_id": "$1", "task_id": "$2" }
+          }
+        ]
+      }
+    }
+  }
+}
