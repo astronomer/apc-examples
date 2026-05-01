@@ -231,8 +231,7 @@ roughly five minutes, including manual conflict resolution.
 
 ---
 
-## Help and feedback
+## Help
 
-This is an example, not a supported product. If something doesn't work for
-your setup, please open an issue on this repository or reach out to your
-Astronomer account team.
+This is an example, not a supported product. If something doesn't work
+for your setup, reach out to your Astronomer account team.

@@ -29,9 +29,3 @@ reach out to your Astronomer account team.
 |-----------|----------------|
 | [`argocd-based-chart-upgrades/`](./argocd-based-chart-upgrades/) | Upgrade the Astronomer Helm chart in a GitOps central-repo while preserving in-tree customizations. A small bash script wraps git's 3-way merge so the customization-replay is automatic. |
 | [`cluster-overrides-via-api/`](./cluster-overrides-via-api/) | Manage `cluster.configOverride.deployments` (the **Cluster Deployment Configuration** UI page) as code. A single `overrides.json` file plus two GitHub Actions workflows (`plan` and `apply`) replace the click-driven flow with a PR-reviewed flow. |
-
-## Contributing
-
-Bug reports and improvements via pull request are welcome. Please keep
-contributions generic — examples in this repo should be useful to any
-APC customer, not tied to a specific install.
