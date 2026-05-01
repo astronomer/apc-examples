@@ -183,22 +183,6 @@ Top-level keys are siblings under `deployments` — there is **no outer
 `deployments` key is present, because the API silently auto-wraps it
 into `deployments.deployments.*` and the override becomes inert.
 
-Common top-level keys:
-
-| Key | What it controls |
-|-----|------------------|
-| `helm.extraObjects` | Raw Kubernetes manifests rendered into every airflow-chart release (Istio VirtualServices, NetworkPolicies, IRSA ServiceAccounts, etc.) |
-| `helm.airflow.statsd.overrideMappings` | Custom statsd-exporter mappings for Airflow metrics |
-| `helm.airflow.workers.*`, `helm.airflow.scheduler.*`, ... | Per-component airflow-chart values cluster-wide |
-| `components` | Per-component resource defaults / minimums / limits (workers, scheduler, webserver, ...) |
-| `maxPodCapacity` | The `LimitRange` ceiling for any single pod |
-| `maxExtraCapacity` | The cluster-wide ceiling for the resource sliders in the deployment UI |
-| `astroUnit` | The base accounting unit for the resource sliders |
-
-The full set of available keys is visible in the **Cluster Deployment
-Configuration** page in the APC UI; ask your Astronomer account team if
-you need a definitive list.
-
 ### Important: arrays REPLACE on merge
 
 The Houston resolver merges your override into the cluster's effective
