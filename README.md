@@ -19,9 +19,8 @@ use any of this code against a real cluster:
   it works in the contexts it was tested in, and may need adjustment for
   yours.
 
-If something here breaks your day, that is on you. If you'd like to
-discuss whether one of these patterns is a good fit for your install,
-reach out to your Astronomer account team.
+If you'd like to discuss whether one of these patterns is a good fit
+for your install, reach out to your Astronomer account team.
 
 ## Examples
 
