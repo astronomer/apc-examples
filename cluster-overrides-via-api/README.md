@@ -55,8 +55,7 @@ What this gives you:
   values. This is a property of the platform, not of this automation —
   it is the single most common surprise after a successful apply.
 - **It does not validate config semantics.** Basic JSON parsing and the
-  outer-wrapper check happen client-side; everything else (component
-  resource math, valid component names, schema correctness) is left to
+  outer-wrapper check happen client-side; everything else (valid component names, schema correctness) is left to
   Houston to validate at apply time. If the apply fails server-side, the
   workflow fails and the GraphQL error is surfaced.
 - **It does not handle multiple clusters.** One repo == one cluster. To
@@ -132,6 +131,8 @@ curl -s -X POST "$HOUSTON_BASE_URL/v1" \
   -H "Content-Type: application/json" \
   -d '{"query":"query { clusters { id name } }"}'
 ```
+
+Alternatively, get the cluster ID from the UI (on the Clusters page).
 
 ### 5. Adapt `overrides.json` to match your cluster's current state
 
